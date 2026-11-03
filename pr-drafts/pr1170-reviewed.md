@@ -180,15 +180,19 @@ previous commit:
   lit reports 671 discovered in both configs because an unsupported test still counts as
   discovered, so failure sets never compare across configs.
 
-Open and unowned, found while diagnosing a lit failure, deliberately **not** fixed here (wrong
-scope; #1170 does not touch `ExecutionEngine.cs`): `PipelineOutcome.Cancelled` has no case in
+Found while diagnosing a lit failure, deliberately **not** fixed here (wrong scope; #1170 does not
+touch `ExecutionEngine.cs`): `PipelineOutcome.Cancelled` has no case in
 `ExecutionEngine.ProcessProgram`'s switch (`ExecutionEngine.cs:202`), so a cancelled command-line
 run hits `Debug.Assert(false, "Unreachable code")` and FailFasts in Debug; and
 `VerifyEachImplementation` catches `TaskCanceledException` but not plain `OperationCanceledException`,
-so cancellation leaves by two different routes. #1172 was to fix these, but its session ended with
-its PR head at the old two-file version (`84c377d2`); the four-escape version sits unmerged on
-`origin/fix/cancelled-process-program-v2` @ `eadc1ad8`.
+so cancellation leaves by two different routes. **#1172 owns both and has them covered**: its head
+is `eadc1ad8` (2 files, +86/-4, updated 2026-11-03T17:12Z), which fixes those two plus
+`PreProcessProgramVerification`'s token and `ProcessFiles`' `ThrowIfCancellationRequested` loops.
+An earlier revision of this file said that PR was stranded at `84c377d2` with its session ended;
+both were wrong, and the claim came from a peer session's stale `gh` read rather than from a check.
 
 Also unfiled: `prover/z3-hard-timeout.bpl` fails on master with modern z3 (it CHECKs for a
 resource count of `-1`, which only appears when z3 is killed by `-T:1`), on four independent
-measurements.
+measurements. It is load-dependent in the backwards direction — it fails on an idle machine and
+passes on a busy one — and it is not gated by `batch_mode`, since its own RUN line forces batch
+mode.
