@@ -412,6 +412,36 @@ procedure Foo(x: int) {
   }
 
   [Test]
+  public async Task TimedOutSplitGivesItsCheckerBackOnceWhenAPartThrows() {
+    var options = CommandLineOptions.FromArguments(TextWriter.Null);
+    options.VcsCores = 1;
+    options.VcsMaxKeepGoingSplits = 2;
+    options.CreateSolver = (_, _) => new TimeOutThenBreakSolver();
+    var engine = ExecutionEngine.CreateWithoutSharedCache(options);
+    const string source = @"
+procedure Foo(x: int) {
+  if (x > 0) {
+    assert x > 1;
+  } else {
+    assert x < 1;
+  }
+}";
+    // Foo's check times out, so Foo is split in two, which are checked one after the other on its checker. Sending the
+    // second breaks the pipe.
+    Parser.Parse(source, "fakeFilename1", out var program);
+    engine.ResolveAndTypecheck(program, "fakeFilename1", out _);
+    var stats = new PipelineStatistics();
+    await engine.InferAndVerify(TextWriter.Null, program, stats);
+    Assert.AreEqual(1, stats.InconclusiveCount);
+
+    // Had the checker been given back twice, the pool would hand it out twice.
+    Parser.Parse(source, "fakeFilename1", out program);
+    var split = (await engine.GetVerificationTasks(program))[0].Split;
+    await engine.CheckerPool.FindCheckerFor(program, split, CancellationToken.None);
+    Assert.IsFalse(engine.CheckerPool.FindCheckerFor(program, split, CancellationToken.None).IsCompleted);
+  }
+
+  [Test]
   public async Task FromSeedResetsState() {
     var options = CommandLineOptions.FromArguments(TextWriter.Null);
     options.VcsCores = 1;
@@ -680,6 +710,27 @@ procedure easy() ensures 1 + 1 == 0; {
     // Answer asynchronously, as a solver process does, so a check that waits for an answer returns to its caller.
     public override async Task PingPong() {
       await Task.Yield();
+    }
+  }
+
+  /// <summary>
+  /// A solver whose first check times out, and whose pipe breaks when the third VC is sent to it.
+  /// </summary>
+  private class TimeOutThenBreakSolver : UnsatSolver {
+    private int checks;
+    private int vcs;
+
+    public override void Send(string request) {
+      if (request.StartsWith("(assert (not") && ++vcs == 3) {
+        throw new IOException("Broken pipe");
+      }
+      if (request == "(check-sat)" && ++checks == 1) {
+        responses.Enqueue(new SExpr("unknown"));
+      } else if (request == "(get-info :reason-unknown)" && checks == 1) {
+        responses.Enqueue(new SExpr(":reason-unknown", new SExpr("timeout")));
+      } else {
+        base.Send(request);
+      }
     }
   }
 }
