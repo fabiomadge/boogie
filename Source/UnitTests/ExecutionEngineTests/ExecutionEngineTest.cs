@@ -442,6 +442,32 @@ procedure Foo(x: int) {
   }
 
   [Test]
+  public async Task CheckTimesOutWhileSendingItsVC() {
+    var harness = new BlockedSendHarness("(assert (not", timeLimit: 1);
+    var task = (await harness.Engine.GetVerificationTasks(harness.Parse()))[0];
+    try {
+      Assert.AreEqual(SolverOutcome.TimeOut, ((Completed)await task.TryRun()!.ToTask()).Result.Outcome);
+    } finally {
+      harness.Unblock();
+    }
+  }
+
+  [Test]
+  public async Task CommandLineCheckTimesOutWhileSendingItsVC() {
+    var harness = new BlockedSendHarness("(assert (not", timeLimit: 1);
+    try {
+      Assert.AreEqual(PipelineOutcome.VerificationCompleted, await harness.Verify(CancellationToken.None));
+    } finally {
+      harness.Unblock();
+    }
+    var result = harness.Printer.Result;
+    // As when the solver times out, the time out of a single assertion is reported as a failure of that assertion.
+    Assert.AreEqual(VcOutcome.Errors, result.VcOutcome);
+    Assert.AreEqual(SolverOutcome.TimeOut, result.RunResults.Single().Outcome);
+    Assert.AreEqual(TimeSpan.FromSeconds(1), result.Elapsed);
+  }
+
+  [Test]
   public async Task FromSeedResetsState() {
     var options = CommandLineOptions.FromArguments(TextWriter.Null);
     options.VcsCores = 1;
@@ -621,12 +647,13 @@ procedure easy() ensures 1 + 1 == 0; {
 
     public ExecutionEngine Engine { get; }
     public SemaphoreSlim Blocked { get; } = new(0);
+    public ResultRecordingPrinter Printer { get; } = new();
 
-    public BlockedSendHarness(string blockedPrefix, bool disposeScheduler = true) {
-      var options = CommandLineOptions.FromArguments(TextWriter.Null);
+    public BlockedSendHarness(string blockedPrefix, bool disposeScheduler = true, uint timeLimit = 10) {
+      var options = CommandLineOptions.FromArguments(TextWriter.Null, Printer);
       options.VcsCores = 1;
       // With a time limit, a run stops waiting for its check as soon as it is cancelled.
-      options.TimeLimit = 10;
+      options.TimeLimit = timeLimit;
       options.CreateSolver = (_, _) => {
         lock (solvers) {
           var solver = new SendCountingSolver(request => {
@@ -674,6 +701,14 @@ procedure easy() ensures 1 + 1 == 0; {
           return solvers.All(solver => solver.Closed);
         }
       }
+    }
+  }
+
+  private class ResultRecordingPrinter : NullPrinter, OutputPrinter {
+    public ImplementationRunResult Result { get; private set; }
+
+    void OutputPrinter.ReportEndVerifyImplementation(Implementation implementation, ImplementationRunResult result) {
+      Result = result;
     }
   }
 

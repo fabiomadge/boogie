@@ -885,15 +885,42 @@ namespace VC
         return result;
       }
 
+      public async Task<VerificationRunResult> WaitForBeginCheck(Task beginCheck, int iteration, uint timeout,
+        VerifierCallback callback, CancellationToken cancellationToken)
+      {
+        if (timeout == 0)
+        {
+          await beginCheck;
+          return null;
+        }
+        var limit = TimeSpan.FromSeconds(timeout);
+        var start = DateTime.UtcNow;
+        try
+        {
+          await beginCheck.WaitAsync(limit, cancellationToken);
+          return null;
+        }
+        catch (TimeoutException)
+        {
+          return ReportOutcome(iteration, SolverOutcome.TimeOut, start, limit, 0, callback);
+        }
+      }
+
       public VerificationRunResult ReadOutcome(int iteration, Checker checker, VerifierCallback callback)
       {
         Contract.EnsuresOnThrow<UnexpectedProverOutputException>(true);
         SolverOutcome outcome = Cce.NonNull(checker).ReadOutcome();
+        return ReportOutcome(iteration, outcome, checker.ProverStart, checker.ProverRunTime,
+          checker.GetProverResourceCount(), callback);
+      }
 
+      private VerificationRunResult ReportOutcome(int iteration, SolverOutcome outcome, DateTime start,
+        TimeSpan runTime, int resourceCount, VerifierCallback callback)
+      {
         if (Options.Trace && SplitIndex >= 0)
         {
           Run.OutputWriter.WriteLine("      --> split #{0} done,  [{1} s] {2}", SplitIndex + 1,
-            checker.ProverRunTime.TotalSeconds, outcome);
+            runTime.TotalSeconds, outcome);
         }
 
         if (Options.Trace && Options.TrackVerificationCoverage)
@@ -902,14 +929,13 @@ namespace VC
             string.Join("\n  ", CoveredElements.Select(s => s.Description).OrderBy(s => s)));
         }
 
-        var resourceCount = checker.GetProverResourceCount();
         var result = new VerificationRunResult(
           VcNum: SplitIndex + 1,
           Iteration: iteration,
-          StartTime: checker.ProverStart,
+          StartTime: start,
           Outcome: outcome,
-          RunTime: checker.ProverRunTime,
-          MaxCounterExamples: checker.Options.ErrorLimit,
+          RunTime: runTime,
+          MaxCounterExamples: Options.ErrorLimit,
           CounterExamples: Counterexamples,
           Asserts: Asserts,
           CoveredElements: CoveredElements,
