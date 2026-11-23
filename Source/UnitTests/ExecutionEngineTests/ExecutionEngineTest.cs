@@ -442,6 +442,34 @@ procedure Foo(x: int) {
   }
 
   [Test]
+  public async Task CheckTimesOutWhileSendingItsVC() {
+    var harness = new BlockedSendHarness("(assert (not", timeLimit: 1);
+    var task = (await harness.Engine.GetVerificationTasks(harness.Parse()))[0];
+    try {
+      Assert.AreEqual(SolverOutcome.TimeOut, ((Completed)await task.TryRun()!.ToTask()).Result.Outcome);
+    } finally {
+      harness.Unblock();
+    }
+  }
+
+  [Test]
+  public async Task CommandLineCheckTimesOutWhileSendingItsVC() {
+    var harness = new BlockedSendHarness("(assert (not", timeLimit: 1);
+    try {
+      // With two assertions, the split is not its own last chance, whose time out would be reported as a failure of its
+      // assertion instead.
+      Assert.AreEqual(PipelineOutcome.VerificationCompleted, await harness.Verify(CancellationToken.None,
+        "procedure Foo(x: int) {\n  assert true;\n  assert true;\n}"));
+    } finally {
+      harness.Unblock();
+    }
+    var result = harness.Printer.Result;
+    Assert.AreEqual(VcOutcome.TimedOut, result.VcOutcome);
+    Assert.AreEqual(SolverOutcome.TimeOut, result.RunResults.Single().Outcome);
+    Assert.AreEqual(TimeSpan.FromSeconds(1), result.Elapsed);
+  }
+
+  [Test]
   public async Task FromSeedResetsState() {
     var options = CommandLineOptions.FromArguments(TextWriter.Null);
     options.VcsCores = 1;
@@ -621,12 +649,13 @@ procedure easy() ensures 1 + 1 == 0; {
 
     public ExecutionEngine Engine { get; }
     public SemaphoreSlim Blocked { get; } = new(0);
+    public ResultRecordingPrinter Printer { get; } = new();
 
-    public BlockedSendHarness(string blockedPrefix, bool disposeScheduler = true) {
-      var options = CommandLineOptions.FromArguments(TextWriter.Null);
+    public BlockedSendHarness(string blockedPrefix, bool disposeScheduler = true, uint timeLimit = 10) {
+      var options = CommandLineOptions.FromArguments(TextWriter.Null, Printer);
       options.VcsCores = 1;
-      // With a time limit, a run stops waiting for its check as soon as it is cancelled.
-      options.TimeLimit = 10;
+      // With a time limit, a run stops waiting for its check as soon as it is cancelled or the limit passes.
+      options.TimeLimit = timeLimit;
       options.CreateSolver = (_, _) => {
         lock (solvers) {
           var solver = new SendCountingSolver(request => {
@@ -644,16 +673,18 @@ procedure easy() ensures 1 + 1 == 0; {
         CustomStackSizePoolTaskScheduler.Create(ExecutionEngine.StackSize, 2), disposeScheduler);
     }
 
-    public Program Parse() {
-      Assert.AreEqual(0, Parser.Parse("procedure Foo(x: int) {\n  assert true;\n}", "fakeFilename1", out var program));
+    private const string DefaultSource = "procedure Foo(x: int) {\n  assert true;\n}";
+
+    public Program Parse(string source = DefaultSource) {
+      Assert.AreEqual(0, Parser.Parse(source, "fakeFilename1", out var program));
       return program;
     }
 
     /// <summary>
     /// Verify a fresh copy of the program as the command line does, by splitting it into VCs and verifying those.
     /// </summary>
-    public Task<PipelineOutcome> Verify(CancellationToken cancellationToken) {
-      var program = Parse();
+    public Task<PipelineOutcome> Verify(CancellationToken cancellationToken, string source = DefaultSource) {
+      var program = Parse(source);
       Assert.AreEqual(PipelineOutcome.ResolvedAndTypeChecked, Engine.ResolveAndTypecheck(program, "fakeFilename1", out _));
       return Engine.InferAndVerify(TextWriter.Null, program, new PipelineStatistics(), cancellationToken: cancellationToken);
     }
@@ -674,6 +705,14 @@ procedure easy() ensures 1 + 1 == 0; {
           return solvers.All(solver => solver.Closed);
         }
       }
+    }
+  }
+
+  private class ResultRecordingPrinter : NullPrinter, OutputPrinter {
+    public ImplementationRunResult Result { get; private set; }
+
+    void OutputPrinter.ReportEndVerifyImplementation(Implementation implementation, ImplementationRunResult result) {
+      Result = result;
     }
   }
 
