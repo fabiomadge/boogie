@@ -1,5 +1,5 @@
-// RUN: %boogie /proverOpt:C:"-T:1" "%s" > "%t"
-// RUN: %OutputCheck --file-to-check "%t" "%s"
+// A solver exception leaves a non-zero exit code, so the output goes through a pipe rather than a file.
+// RUN: %boogie /proverOpt:C:"-T:1" "%s" | %OutputCheck "%s"
 // CHECK-L: Verification encountered solver exception (Cubes1)
 // CHECK-L: Verification encountered solver exception (Cubes2)
 // CHECK-L: Boogie program verifier finished with 0 verified, 0 errors, 2 solver exceptions

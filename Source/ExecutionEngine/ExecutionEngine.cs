@@ -199,7 +199,9 @@ namespace Microsoft.Boogie
         case PipelineOutcome.Done:
         case PipelineOutcome.VerificationCompleted:
           Options.Printer.WriteTrailer(output, stats);
-          return true;
+          // #415 added this exit code to make a dead solver a hard failure. It stays one, but the run now finishes
+          // and reports first, rather than stopping at whichever check noticed.
+          return stats.SolverExceptionCount == 0;
         case PipelineOutcome.FatalError:
         case PipelineOutcome.Cancelled:
           return false;
@@ -1031,9 +1033,12 @@ namespace Microsoft.Boogie
           verificationResult.Errors = null;
           verificationResult.VcOutcome = VcOutcome.Inconclusive;
         }
-        catch (ProverDiedException)
+        // Before the UnexpectedProverOutputException it derives from, which would report it as inconclusive.
+        catch (ProverDiedException e)
         {
-          throw;
+          Options.Printer.AdvisoryWriteLine(traceWriter, "Advisory: {0} SKIPPED: {1}", impl.VerboseName, e.Message);
+          verificationResult.Errors = null;
+          verificationResult.VcOutcome = VcOutcome.SolverException;
         }
         catch (UnexpectedProverOutputException upo)
         {
