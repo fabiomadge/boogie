@@ -91,7 +91,16 @@ namespace Microsoft.Boogie.SMTLib
 
     private void IndicateEndOfInput()
     {
-      solver.StandardInput.Close();
+      try
+      {
+        solver.StandardInput.Close();
+      }
+      catch (IOException)
+      {
+        // Closing flushes, which fails for the same reason a Send does once the solver is gone.
+        SolverIsGone();
+      }
+
       toProver = null;
     }
 
@@ -125,8 +134,27 @@ namespace Microsoft.Boogie.SMTLib
         Console.WriteLine("[SMT-INP-{0}] {1}", smtProcessId, log);
       }
 
-      toProver.WriteLine(cmd);
-      toProver.Flush();
+      try
+      {
+        toProver.WriteLine(cmd);
+        toProver.Flush();
+      }
+      catch (IOException)
+      {
+        SolverIsGone();
+      }
+    }
+
+    /// <summary>
+    /// A write failed, so the solver has stopped reading and will send nothing more. Ending the parser's input
+    /// makes the next read report that, instead of letting the failed write decide the outcome: Boogie writes to
+    /// the solver after it has answered, and such a write would otherwise discard that answer. The flush in
+    /// GetProverResponse still throws, because it is that read's own check that the solver is there, and
+    /// swallowing it leaves a solver which stopped reading but has not exited with nothing to report at all.
+    /// </summary>
+    private void SolverIsGone()
+    {
+      sexpParser.EndInput();
     }
 
     public override async Task<SExpr> SendRequest(string request, CancellationToken cancellationToken = default) {
