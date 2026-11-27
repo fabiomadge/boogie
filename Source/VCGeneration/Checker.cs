@@ -292,26 +292,29 @@ namespace Microsoft.Boogie
         ProverStopwatch.Stop();
       }
 
-      switch (outcome)
+      if (outputExn == null)
       {
-        case SolverOutcome.Valid:
-          thmProver.LogComment("Valid");
-          break;
-        case SolverOutcome.Invalid:
-          thmProver.LogComment("Invalid");
-          break;
-        case SolverOutcome.TimeOut:
-          thmProver.LogComment("Timed out");
-          break;
-        case SolverOutcome.OutOfResource:
-          thmProver.LogComment("Out of resource");
-          break;
-        case SolverOutcome.OutOfMemory:
-          thmProver.LogComment("Out of memory");
-          break;
-        case SolverOutcome.Undetermined:
-          thmProver.LogComment("Undetermined");
-          break;
+        switch (outcome)
+        {
+          case SolverOutcome.Valid:
+            thmProver.LogComment("Valid");
+            break;
+          case SolverOutcome.Invalid:
+            thmProver.LogComment("Invalid");
+            break;
+          case SolverOutcome.TimeOut:
+            thmProver.LogComment("Timed out");
+            break;
+          case SolverOutcome.OutOfResource:
+            thmProver.LogComment("Out of resource");
+            break;
+          case SolverOutcome.OutOfMemory:
+            thmProver.LogComment("Out of memory");
+            break;
+          case SolverOutcome.Undetermined:
+            thmProver.LogComment("Undetermined");
+            break;
+        }
       }
 
       hasOutput = true;
