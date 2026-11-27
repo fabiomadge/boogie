@@ -1,11 +1,10 @@
-// A solver exception leaves a non-zero exit code, so the output goes through a pipe rather than a file.
+// A solver that runs out of its own hard time limit reports a timeout, the same way interactively as in batch
+// mode. z3 prints `timeout` and exits 0, so the answer is there to be read, and the check that used it does not
+// look like one whose solver died.
 // RUN: %boogie /proverOpt:C:"-T:1" "%s" | %OutputCheck "%s"
-// CHECK-L: Verification encountered solver exception (Cubes1)
-// CHECK-L: Verification encountered solver exception (Cubes2)
-// CHECK-L: Boogie program verifier finished with 0 verified, 0 errors, 2 solver exceptions
-
-// Batch mode reads z3's `timeout` as a timeout instead, as z3-hard-timeout.bpl expects.
-// UNSUPPORTED: batch_mode
+// CHECK-L: Error: this assertion could not be proved
+// CHECK-L: Error: this assertion could not be proved
+// CHECK-L: Boogie program verifier finished with 0 verified, 2 errors
 
 // z3 decides neither assertion before its hard time limit of a second makes it exit.
 procedure Cubes1(x: int, y: int, z: int) {

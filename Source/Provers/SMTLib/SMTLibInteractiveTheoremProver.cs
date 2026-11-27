@@ -238,7 +238,25 @@ namespace Microsoft.Boogie.SMTLib
     }
 
     [NoDefaultContract]
-    public async Task<SolverOutcome> CheckSat(CancellationToken cancellationToken,
+    public async Task<SolverOutcome> CheckSat(CancellationToken cancellationToken, int errorLimit)
+    {
+      try
+      {
+        return await CheckSatCore(cancellationToken, errorLimit);
+      }
+      // The solver's hard time limit can run out under any of a check's requests, not only the one asking it to
+      // decide, and every caller reaches several, so this is caught here rather than at a single request.
+      // SMTLibBatchTheoremProver reports the same answer the same way.
+      catch (TimeoutException)
+      {
+        currentErrorHandler.OnResourceExceeded("hard solver timeout");
+        resourceCount = -1;
+        processNeedsRestart = true;
+        return SolverOutcome.TimeOut;
+      }
+    }
+
+    private async Task<SolverOutcome> CheckSatCore(CancellationToken cancellationToken,
       int errorLimit)
     {
       Contract.EnsuresOnThrow<UnexpectedProverOutputException>(true);

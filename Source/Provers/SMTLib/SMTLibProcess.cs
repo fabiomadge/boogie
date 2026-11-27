@@ -166,6 +166,11 @@ namespace Microsoft.Boogie.SMTLib
         Send(PingRequest);
         while (true) {
           var response = await GetProverResponse();
+          // z3 prints this and exits when its -T limit runs out, so no pong can follow it, as SendRequestsAndClose
+          // already assumes for batch mode.
+          if (response is { Name: "timeout" }) {
+            throw new TimeoutException();
+          }
           if (IsPong(response)) {
             if (previousResponse == null) {
               throw new Exception("Request returned no response");
