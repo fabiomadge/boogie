@@ -216,16 +216,11 @@ namespace Microsoft.Boogie.SMTLib
       hasReset = true;
     }
 
-    /// <summary>
-    /// How long the solver gets to answer that it survived the reset. Needed because a solver can stop answering
-    /// without closing either pipe, which nothing else would notice. Only an upper bound on a hang, so it is far
-    /// longer than a reset takes.
-    /// </summary>
-    private static readonly TimeSpan ResetLivenessTimeout = TimeSpan.FromSeconds(30);
-
     private async Task RecoverIfProverCrashedAfterReset(CancellationToken cancellationToken)
     {
-      if (await Process.GetExceptionIfProverDied(ResetLivenessTimeout, cancellationToken) is not null)
+      // Bounded by the check's deadline, which this runs under. A deadline of its own would only be a second,
+      // invented limit on the same wait, and would cut short a reset that /timeLimit:0 asked to be unbounded.
+      if (await Process.GetExceptionIfProverDied(cancellationToken) is not null)
       {
         // We recover the process but don't issue the `(reset)` command that fails.
         SetupProcess();
