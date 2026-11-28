@@ -64,7 +64,7 @@ public class NoopSolver : SMTLibSolver
   {
   }
 
-  public override Task PingPong() {
+  public override Task PingPong(CancellationToken cancellationToken = default) {
     return Task.CompletedTask;
   }
 

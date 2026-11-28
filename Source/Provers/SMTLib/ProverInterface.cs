@@ -180,7 +180,8 @@ public abstract class ProverInterface
   {
   }
 
-  public abstract Task Reset(VCExpressionGenerator gen, VCExpr queryAxioms = null);
+  public abstract Task Reset(VCExpressionGenerator gen, VCExpr queryAxioms = null,
+    CancellationToken cancellationToken = default);
 
   public abstract void FullReset(VCExpressionGenerator gen);
 
@@ -318,6 +319,11 @@ public class ProverDiedException : UnexpectedProverOutputException
 {
   public ProverDiedException()
     : base("Prover died with no further output, perhaps it ran out of memory or was killed.")
+  {
+  }
+
+  public ProverDiedException(string reason)
+    : base($"Prover died: {reason}.")
   {
   }
 }

@@ -114,7 +114,7 @@ namespace Microsoft.Boogie.SMTLib
 
         if (Process != null)
         {
-          await Process.PingPong(); // flush any errors
+          await Process.PingPong(cancellationToken); // flush any errors
           Process.NewProblem(descriptiveName);
         }
 
@@ -197,11 +197,12 @@ namespace Microsoft.Boogie.SMTLib
       NamedAssumes.UnionWith(baseline.NamedAssumes);
     }
 
-    public override async Task Reset(VCExpressionGenerator generator, VCExpr queryAxioms = null)
+    public override async Task Reset(VCExpressionGenerator generator, VCExpr queryAxioms = null,
+      CancellationToken cancellationToken = default)
     {
       gen = generator;
       SendThisVC("(reset)");
-      await RecoverIfProverCrashedAfterReset();
+      await RecoverIfProverCrashedAfterReset(cancellationToken);
       if (queryAxioms == null && 0 < common.Length)
       {
         var c = common.ToString();
@@ -215,9 +216,16 @@ namespace Microsoft.Boogie.SMTLib
       hasReset = true;
     }
 
-    private async Task RecoverIfProverCrashedAfterReset()
+    /// <summary>
+    /// How long the solver gets to answer that it survived the reset. Needed because a solver can stop answering
+    /// without closing either pipe, which nothing else would notice. Only an upper bound on a hang, so it is far
+    /// longer than a reset takes.
+    /// </summary>
+    private static readonly TimeSpan ResetLivenessTimeout = TimeSpan.FromSeconds(30);
+
+    private async Task RecoverIfProverCrashedAfterReset(CancellationToken cancellationToken)
     {
-      if (await Process.GetExceptionIfProverDied() is not null)
+      if (await Process.GetExceptionIfProverDied(ResetLivenessTimeout, cancellationToken) is not null)
       {
         // We recover the process but don't issue the `(reset)` command that fails.
         SetupProcess();
@@ -280,7 +288,7 @@ namespace Microsoft.Boogie.SMTLib
           {
             if (usingUnsatCore)
             {
-              var resp = await SendVcRequest("(get-unsat-core)").WaitAsync(cancellationToken);
+              var resp = await SendVcRequest("(get-unsat-core)", cancellationToken);
               ReportCoveredElements(resp);
             }
           }
@@ -348,7 +356,12 @@ namespace Microsoft.Boogie.SMTLib
     }
 
     // TODO seems like there's a sort of empty line being returned that we can use to check that the solver is done, but this code doesn't use it.
-    private Task<SExpr> SendVcRequest(string s) {
+    /// <summary>
+    /// Takes the token rather than leaving callers to wrap the returned task in WaitAsync. Wrapping only abandons
+    /// the caller: the read stays parked on the solver's answer holding the process lock, so every later request
+    /// on that solver waits for a cancelled check forever.
+    /// </summary>
+    private Task<SExpr> SendVcRequest(string s, CancellationToken cancellationToken = default) {
       s = Sanitize(s);
 
       if (currentLogFile != null)
@@ -357,7 +370,7 @@ namespace Microsoft.Boogie.SMTLib
         currentLogFile.Flush();
       }
 
-      return Process.SendRequest(s);
+      return Process.SendRequest(s, cancellationToken);
     }
 
     private T WrapInPushPop<T>(ref bool popLater, Func<T> action)
@@ -556,7 +569,7 @@ namespace Microsoft.Boogie.SMTLib
         return null;
       }
 
-      var resp = await SendVcRequest("(get-model)").WaitAsync(cancellationToken);
+      var resp = await SendVcRequest("(get-model)", cancellationToken);
       return resp != null ? ParseErrorModel(resp) : null;
     }
 
@@ -565,7 +578,7 @@ namespace Microsoft.Boogie.SMTLib
       var result = SolverOutcome.Undetermined;
       var wasUnknown = false;
 
-      var checkSatResponse = await SendVcRequest("(check-sat)").WaitAsync(cancellationToken);
+      var checkSatResponse = await SendVcRequest("(check-sat)", cancellationToken);
       if (checkSatResponse != null)
       {
         result = ParseOutcome(checkSatResponse, out wasUnknown);
@@ -573,7 +586,7 @@ namespace Microsoft.Boogie.SMTLib
 
       if (wasUnknown)
       {
-        var getInfoResponse = await SendVcRequest("(get-info :reason-unknown)").WaitAsync(cancellationToken);
+        var getInfoResponse = await SendVcRequest("(get-info :reason-unknown)", cancellationToken);
         if (getInfoResponse != null)
         {
           result = ParseReasonUnknown(getInfoResponse, result);
@@ -779,7 +792,7 @@ namespace Microsoft.Boogie.SMTLib
         }
 
         Contract.Assert(usingUnsatCore, "SMTLib prover not setup for computing unsat cores");
-        var resp = await SendVcRequest("(get-unsat-core)").WaitAsync(cancellationToken);
+        var resp = await SendVcRequest("(get-unsat-core)", cancellationToken);
         var unsatCore = new List<int>();
         if (resp is not null && resp.Name != "")
         {
@@ -875,7 +888,7 @@ namespace Microsoft.Boogie.SMTLib
         {
           foreach (var relaxVar in relaxVars)
           {
-            var resp = await SendVcRequest($"(get-value ({relaxVar}))").WaitAsync(cancellationToken);
+            var resp = await SendVcRequest($"(get-value ({relaxVar}))", cancellationToken);
             if (resp == null)
             {
               break;

@@ -57,16 +57,28 @@ public class AsyncQueue<T>
 
   public Task<T> Dequeue()
   {
+    return Dequeue(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Waits for an item, giving up if the token is cancelled. A cancelled customer is left in the queue and
+  /// skipped by Enqueue, whose TrySetResult fails on it, so no item is handed to a caller that stopped waiting.
+  /// </summary>
+  public Task<T> Dequeue(CancellationToken cancellationToken)
+  {
     lock (myLock) {
       if (items.TryDequeue(out var result)) {
         return Task.FromResult(result);
       }
 
       var source = new TaskCompletionSource<T>();
+      var registration = cancellationToken.Register(() => source.TrySetCanceled(cancellationToken));
       customers.Enqueue(source);
       // Ensure that the TrySetResult call in Enqueue completes immediately.
-      return source.Task.ContinueWith(t => t.Result, CancellationToken.None,
-        TaskContinuationOptions.RunContinuationsAsynchronously, TaskScheduler.Current);
+      return source.Task.ContinueWith(t => {
+        registration.Dispose();
+        return t.GetAwaiter().GetResult();
+      }, CancellationToken.None, TaskContinuationOptions.RunContinuationsAsynchronously, TaskScheduler.Current);
     }
   }
 }

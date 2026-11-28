@@ -157,7 +157,7 @@ namespace Microsoft.Boogie.SMTLib
         // We assume the last response is the correct one.
         Send(PingRequest);
         while (true) {
-          var response = await GetProverResponse();
+          var response = await GetProverResponse(cancellationToken);
           // z3 prints this and exits when its -T limit runs out, so the pong this loop waits for never comes.
           // SendRequestsAndCloseInput checks the same answer for batch mode, which sends no ping.
           if (response is { Name: "timeout" }) {
@@ -177,12 +177,12 @@ namespace Microsoft.Boogie.SMTLib
       }
     }
 
-    public override async Task PingPong() {
+    public override async Task PingPong(CancellationToken cancellationToken = default) {
       try {
-        await asyncLock.WaitAsync();
+        await asyncLock.WaitAsync(cancellationToken);
         Send(PingRequest);
         while (true) {
-          var response = await GetProverResponse();
+          var response = await GetProverResponse(cancellationToken);
           if (response == null)
           {
             continue;
@@ -210,7 +210,7 @@ namespace Microsoft.Boogie.SMTLib
         }
         IndicateEndOfInput();
         foreach (var request in requests) {
-          var response = await GetProverResponse();
+          var response = await GetProverResponse(cancellationToken);
           if (response is { Name: "timeout" }) {
             throw new TimeoutException();
           }
@@ -226,14 +226,14 @@ namespace Microsoft.Boogie.SMTLib
 
     private Inspector Inspector { get; }
 
-    private async Task<SExpr> GetProverResponse()
+    private async Task<SExpr> GetProverResponse(CancellationToken cancellationToken)
     {
       if (toProver != null) {
         await toProver.FlushAsync();
       }
 
       while (true) {
-        var exprs = await sexpParser.ParseSExprs(true).ToListAsync();
+        var exprs = await sexpParser.ParseSExprs(true, cancellationToken).ToListAsync();
         Contract.Assert(exprs.Count <= 1);
         if (exprs.Count == 0) {
           if (sexpParser.EndOfInput) {

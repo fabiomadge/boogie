@@ -107,7 +107,8 @@ namespace Microsoft.Boogie.SMTLib
       }
     }
 
-    public override Task Reset(VCExpressionGenerator generator, VCExpr queryAxioms = null) {
+    public override Task Reset(VCExpressionGenerator generator, VCExpr queryAxioms = null,
+      CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 

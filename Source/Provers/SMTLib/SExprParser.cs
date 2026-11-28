@@ -28,14 +28,14 @@ public class SExprParser
     sexpLines.Enqueue(null);
   }
 
-  async Task<string> ReadLine()
+  async Task<string> ReadLine(CancellationToken cancellationToken)
   {
     if (EndOfInput)
     {
       return null;
     }
 
-    var line = await sexpLines.Dequeue();
+    var line = await sexpLines.Dequeue(cancellationToken);
     if (line == null)
     {
       EndOfInput = true;
@@ -44,13 +44,13 @@ public class SExprParser
     return line;
   }
   
-  async Task<char> SkipWs()
+  async Task<char> SkipWs(CancellationToken cancellationToken)
   {
     while (true)
     {
       if (currLine == null)
       {
-        currLine = await ReadLine();
+        currLine = await ReadLine(cancellationToken);
         if (currLine == null)
         {
           return '\0';
@@ -80,11 +80,11 @@ public class SExprParser
     linePos++;
   }
 
-  async Task<string> ParseId()
+  async Task<string> ParseId(CancellationToken cancellationToken)
   {
     var sb = new StringBuilder();
 
-    var begin = await SkipWs();
+    var begin = await SkipWs(cancellationToken);
 
     var quoted = begin == '"' || begin == '|';
     if (quoted)
@@ -101,7 +101,7 @@ public class SExprParser
           do
           {
             sb.Append("\n");
-            currLine = await ReadLine();
+            currLine = await ReadLine(cancellationToken);
           } while (currLine == "");
           if (currLine == null)
           {
@@ -146,11 +146,11 @@ public class SExprParser
     ErrorHandler?.Invoke(msg);
   }
 
-  public async IAsyncEnumerable<SExpr> ParseSExprs(bool top)
+  public async IAsyncEnumerable<SExpr> ParseSExprs(bool top, CancellationToken cancellationToken = default)
   {
     while (true)
     {
-      var c = await SkipWs();
+      var c = await SkipWs(cancellationToken);
       if (c == '\0')
       {
         break;
@@ -172,7 +172,7 @@ public class SExprParser
       if (c == '(')
       {
         Shift();
-        c = await SkipWs();
+        c = await SkipWs(cancellationToken);
         if (c == '\0')
         {
           ParseError("expecting something after '('");
@@ -184,12 +184,12 @@ public class SExprParser
         }
         else
         {
-          id = await ParseId();
+          id = await ParseId(cancellationToken);
         }
 
-        var args = await ParseSExprs(false).ToListAsync();
+        var args = await ParseSExprs(false, cancellationToken).ToListAsync();
 
-        c = await SkipWs();
+        c = await SkipWs(cancellationToken);
         if (c == ')')
         {
           Shift();
@@ -203,7 +203,7 @@ public class SExprParser
       }
       else
       {
-        id = await ParseId();
+        id = await ParseId(cancellationToken);
         yield return new SExpr(id);
       }
 

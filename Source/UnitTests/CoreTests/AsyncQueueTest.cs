@@ -11,6 +11,20 @@ namespace CoreTests;
 public class AsyncQueueTest
 {
   [Test]
+  public void CancelledWaitGivesUpAndLeavesTheQueueUsable()
+  {
+    var queue = new AsyncQueue<int>();
+    var source = new CancellationTokenSource();
+    var waiting = queue.Dequeue(source.Token);
+
+    source.Cancel();
+
+    Assert.CatchAsync<System.OperationCanceledException>(async () => await waiting);
+    queue.Enqueue(3);
+    Assert.AreEqual(3, queue.Dequeue().Result);
+  }
+
+  [Test]
   public async Task DequeueOrder()
   {
     var queue = new AsyncQueue<int>();

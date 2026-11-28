@@ -60,11 +60,19 @@ namespace Microsoft.Boogie
       status = CheckerStatus.Ready;
     }
 
+    private bool deadlineFired;
+
     public async Task GoBackToIdle()
     {
       Contract.Requires(IsBusy);
 
       status = CheckerStatus.Idle;
+      if (deadlineFired) {
+        Pool.CheckerDied();
+        Close();
+        return;
+      }
+
       try {
         await thmProver.GoBackToIdle().WaitAsync(TimeSpan.FromMilliseconds(100));
         Pool.AddChecker(this);
@@ -269,10 +277,32 @@ namespace Microsoft.Boogie
     }
 
 
-    private async Task Check(string descriptiveName, VCExpr vc, CancellationToken cancellationToken, VCExpr queryAxioms) {
+    private async Task CheckUntilDeadline(string descriptiveName, VCExpr vc, CancellationTokenSource deadline,
+      CancellationToken runCancelled, uint timeout, uint rlimit, VCExpr queryAxioms) {
+      using (deadline) {
+        await Check(descriptiveName, vc, deadline.Token, runCancelled, timeout, rlimit, queryAxioms);
+      }
+    }
+
+    private async Task Check(string descriptiveName, VCExpr vc, CancellationToken deadline,
+      CancellationToken runCancelled, uint timeout, uint rlimit, VCExpr queryAxioms) {
       try {
+        // Inside the deadline, because resetting the solver already waits for it to answer.
+        await thmProver.Reset(gen, queryAxioms, deadline);
+        SetTimeout(timeout);
+        SetRlimit(rlimit);
+        ProverStart = DateTime.UtcNow;
+        ProverStopwatch.Restart();
+
         outcome = await thmProver.Check(descriptiveName, vc, Cce.NonNull(handler), Options.ErrorLimit,
-          cancellationToken, queryAxioms);
+          deadline, queryAxioms);
+      }
+      // The deadline firing while the run is still live is this check running out of time, not the run ending.
+      // Unlike a timeout the solver reports, this leaves whatever it was about to say unread, so the next request
+      // on it would be answered by the request this one abandoned. The solver cannot be reused.
+      catch (OperationCanceledException) when (!runCancelled.IsCancellationRequested) {
+        outcome = SolverOutcome.TimeOut;
+        deadlineFired = true;
       }
       catch (OperationCanceledException) {
         throw;
@@ -333,15 +363,22 @@ namespace Microsoft.Boogie
       status = CheckerStatus.Busy;
       hasOutput = false;
       outputExn = null;
+      deadlineFired = false;
       this.handler = handler;
 
-      await thmProver.Reset(gen, queryAxioms);
-      SetTimeout(timeout);
-      SetRlimit(rlimit);
+      // SetTimeout only asks the solver to give up, which binds a solver that is answering. This binds the wait
+      // for an answer as well, so a solver that stops answering without closing a pipe still ends the check. It
+      // belongs here because this is what owns ProverTask, and so outlives BeginCheck returning.
+      var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+      if (timeout != 0)
+      {
+        deadline.CancelAfter(TimeSpan.FromSeconds(timeout));
+      }
 
       ProverStart = DateTime.UtcNow;
       ProverStopwatch.Restart();
-      ProverTask = Check(descriptiveName, vc, cancellationToken, queryAxioms);
+      ProverTask = CheckUntilDeadline(descriptiveName, vc, deadline, cancellationToken, timeout, rlimit,
+        queryAxioms);
     }
 
     public SolverOutcome ReadOutcome()
@@ -397,7 +434,8 @@ namespace Microsoft.Boogie
       throw new NotImplementedException();
     }
 
-    public override Task Reset(VCExpressionGenerator gen, VCExpr queryAxioms = null)
+    public override Task Reset(VCExpressionGenerator gen, VCExpr queryAxioms = null,
+      CancellationToken cancellationToken = default)
     {
       throw new NotImplementedException();
     }
