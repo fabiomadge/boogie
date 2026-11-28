@@ -22,6 +22,42 @@ namespace Microsoft.Boogie.SMTLib
     private ConsoleCancelEventHandler cancelEvent;
     private SExprParser sexpParser = new();
 
+    /// <summary>
+    /// How this solver went away, for the message a read reports it with. Whether it went away at all is the
+    /// parser's end of input, which every caller of SolverIsGone reaches.
+    /// </summary>
+    private string goneReason;
+
+    /// <summary>
+    /// Records how the solver went away, keeping the first reason because it is the one that explains the rest: a
+    /// solver that stopped reading will go on to stop talking too. Called from both pipes and from either thread.
+    ///
+    /// Ending the parser's input is what wakes a read already waiting on a line that will never come, and is why a
+    /// failed write has to be reported here rather than thrown: a solver that stops reading need not also stop
+    /// talking, so nothing else would arrive to end that wait. It queues the end behind whatever the solver already
+    /// said, so an answer it did give is still handed out first.
+    /// </summary>
+    private void SolverIsGone(string reason)
+    {
+      Interlocked.CompareExchange(ref goneReason, reason, null);
+      sexpParser.EndInput();
+    }
+
+    /// <summary>
+    /// Why the solver is gone, asked only once its output has ended, because that is when the process state has
+    /// settled. Before then the first pipe to fail says more about which one Boogie touched than about the cause: a
+    /// solver that exits at once is noticed by a failed write, well before the end of its output arrives.
+    /// </summary>
+    private string GoneReason()
+    {
+      if (solver.HasExited)
+      {
+        return $"it exited with code {solver.ExitCode}";
+      }
+
+      return goneReason ?? "it stopped producing output";
+    }
+
     public SMTLibProcess(SMTLibOptions libOptions, SMTLibSolverOptions options)
     {
       this.options = options;
@@ -97,7 +133,7 @@ namespace Microsoft.Boogie.SMTLib
       }
       catch (IOException)
       {
-        sexpParser.EndInput();
+        SolverIsGone("it stopped reading");
       }
 
       toProver = null;
@@ -140,10 +176,9 @@ namespace Microsoft.Boogie.SMTLib
       }
       catch (IOException)
       {
-        // Boogie also writes after the solver has answered, so the next read, not this write, reports that the solver
-        // is gone. The pipe stays broken, so every later write, flush or close would throw again.
+        // The pipe stays broken, so every later write, flush or close would throw again.
         toProver = TextWriter.Null;
-        sexpParser.EndInput();
+        SolverIsGone("it stopped reading");
       }
     }
 
@@ -158,11 +193,6 @@ namespace Microsoft.Boogie.SMTLib
         Send(PingRequest);
         while (true) {
           var response = await GetProverResponse();
-          // z3 prints this and exits when its -T limit runs out, so the pong this loop waits for never comes.
-          // SendRequestsAndCloseInput checks the same answer for batch mode, which sends no ping.
-          if (response is { Name: "timeout" }) {
-            throw new TimeoutException();
-          }
           if (IsPong(response)) {
             if (previousResponse == null) {
               throw new Exception("Request returned no response");
@@ -211,9 +241,6 @@ namespace Microsoft.Boogie.SMTLib
         IndicateEndOfInput();
         foreach (var request in requests) {
           var response = await GetProverResponse();
-          if (response is { Name: "timeout" }) {
-            throw new TimeoutException();
-          }
           result.Add(response);
         }
 
@@ -229,20 +256,33 @@ namespace Microsoft.Boogie.SMTLib
     private async Task<SExpr> GetProverResponse()
     {
       if (toProver != null) {
-        await toProver.FlushAsync();
+        try {
+          await toProver.FlushAsync();
+        }
+        catch (IOException) {
+          SolverIsGone("it stopped reading");
+        }
       }
 
       while (true) {
         var exprs = await sexpParser.ParseSExprs(true).ToListAsync();
         Contract.Assert(exprs.Count <= 1);
         if (exprs.Count == 0) {
+          // The one place a gone solver becomes an outcome, and only once it has nothing left to say.
           if (sexpParser.EndOfInput) {
-            throw new ProverDiedException();
+            throw new ProverDiedException(GoneReason());
           }
+
           return null;
         }
 
         var resp = exprs[0];
+        // z3 prints this and exits when its -T limit runs out. Checked here so that it reaches every caller,
+        // including the ping, rather than only the two that send a check.
+        if (resp.Name == "timeout") {
+          throw new TimeoutException();
+        }
+
         if (resp.Name == "error") {
           if (resp.Arguments.Length == 1 && resp.Arguments[0].IsId) {
             if (resp.Arguments[0].Name.Contains("max. resource limit exceeded")) {
@@ -361,7 +401,7 @@ namespace Microsoft.Boogie.SMTLib
     {
         if (e.Data == null)
         {
-          sexpParser.EndInput();
+          SolverIsGone("its output ended");
           return;
         }
 

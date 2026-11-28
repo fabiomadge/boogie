@@ -320,4 +320,9 @@ public class ProverDiedException : UnexpectedProverOutputException
     : base("Prover died with no further output, perhaps it ran out of memory or was killed.")
   {
   }
+
+  public ProverDiedException(string reason)
+    : base($"Prover died: {reason}.")
+  {
+  }
 }
